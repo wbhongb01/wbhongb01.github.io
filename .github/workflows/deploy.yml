@@ -22,11 +22,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  # 1) 사이트 파일과 최신 지수를 묶어서 업로드
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
 
@@ -52,5 +50,13 @@ jobs:
         with:
           path: _site
 
+  # 2) 업로드한 묶음을 GitHub Pages에 배포 (업로드가 끝난 뒤 별도 작업에서 해야 묶음을 찾음)
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v5
