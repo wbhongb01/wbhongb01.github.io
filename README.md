@@ -26,13 +26,14 @@
 ## GitHub에 올리고 동기화하기
 
 ### 1. 저장소 두 개 만들기
-1. **`dashboard`** (Public): 이 폴더의 파일을 올립니다. 개인 데이터는 들어가지 않습니다.
+1. **`<사용자명>.github.io`** (Public): 이 폴더의 파일을 올립니다. 개인 데이터는 들어가지 않습니다. 저장소 이름을 이렇게 지으면 주소가 `https://<사용자명>.github.io`로 짧아집니다. (이 저장소: `wbhongb01.github.io`)
 2. **`dashboard-data`** (**Private**): 만들 때 *Add a README file*을 체크합니다. 즐겨찾기가 저장되는 곳입니다.
 
 ### 2. 화면 올리기 (GitHub Pages)
-1. `dashboard` 저장소에 이 폴더의 파일을 `.github` 폴더까지 포함해 올립니다. 숨김 폴더라 웹 업로드에서 빠지기 쉬우니 git으로 올리는 것을 권장합니다.
+1. 공개 저장소에 이 폴더의 파일을 `.github` 폴더까지 포함해 올립니다. 숨김 폴더라 웹 업로드에서 빠지기 쉬우니 git으로 올리는 것을 권장합니다.
 2. 저장소 *Settings → Pages → Build and deployment → Source*를 **GitHub Actions**로 바꿉니다.
-3. *Actions* 탭에서 `deploy`가 끝나면 `https://<사용자명>.github.io/dashboard/` 주소로 접속됩니다. 바로 배포하려면 *Actions → deploy → Run workflow*를 누릅니다.
+3. *Actions* 탭에서 `deploy`가 끝나면 **`https://<사용자명>.github.io`** 주소로 접속됩니다. 바로 배포하려면 *Actions → deploy → Run workflow*를 누릅니다.
+   - 예전 주소(`…/dashboard/`)로 들어와도 새 주소로 자동 이동합니다.
 
 ### 3. 토큰 만들기 (데이터 저장소 전용)
 1. GitHub 오른쪽 위 프로필 → *Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token*

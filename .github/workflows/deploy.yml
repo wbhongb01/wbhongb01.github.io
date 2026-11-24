@@ -39,6 +39,9 @@ jobs:
         run: |
           mkdir _site
           cp index.html style.css app.js sw.js manifest.webmanifest icon.svg _site/
+          # 예전 주소(/dashboard/)로 들어오면 새 주소(/)로 이동
+          mkdir _site/dashboard
+          printf '%s\n' '<!doctype html><meta charset="utf-8"><title>이동</title><meta http-equiv="refresh" content="0; url=/"><script>location.replace("/")</script><a href="/">대시보드로 이동</a>' > _site/dashboard/index.html
 
       - name: 시장 지수 받기
         continue-on-error: true
