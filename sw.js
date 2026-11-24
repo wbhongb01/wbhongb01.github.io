@@ -1,5 +1,5 @@
 // 오프라인에서도 화면이 뜨도록 앱 파일만 캐시 (GitHub API·외부 사이트 요청은 건드리지 않음)
-const CACHE = 'dash-v10';
+const CACHE = 'dash-v11';
 const SHELL = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', (e) => {
@@ -20,7 +20,8 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
   e.respondWith(
-    fetch(e.request)
+    // no-cache: 브라우저 HTTP 캐시에 있어도 서버에 새 버전이 있는지 확인 (배포 직후 옛 파일이 뜨는 문제 방지)
+    fetch(e.request, { cache: 'no-cache' })
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();
