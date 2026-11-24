@@ -1809,6 +1809,10 @@ async function onConnect(e) {
   const msg = $('#syncMsg');
   if (!cfg.owner || !cfg.repo) return setMsg(msg, 'GitHub 사용자명과 저장소 이름을 입력하세요', 'err');
   if (!cfg.token) return setMsg(msg, '토큰을 입력하세요', 'err');
+  // 일부만 붙여넣어지는 경우가 많아 형식부터 확인 (fine-grained 토큰은 github_pat_로 시작하고 90자 이상)
+  if (!/^(github_pat_|ghp_)/.test(cfg.token) || (cfg.token.startsWith('github_pat_') && cfg.token.length < 80)) {
+    return setMsg(msg, `토큰이 잘못 붙여넣어진 것 같아요 (지금 ${cfg.token.length}자). github_pat_로 시작하는 90자 정도의 값 전체를 붙여넣으세요`, 'err');
+  }
   const btn = $('#connectBtn');
   btn.disabled = true;
   setMsg(msg, '연결하는 중…');
