@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>내 대시보드</title>
+  <meta name="theme-color" content="#f6f6f3" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#111214" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="대시보드">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <header class="clock">
+      <div id="time" class="time clock-minimal" role="timer" aria-live="off">--:--</div>
+      <div class="subline">
+        <span id="date">&nbsp;</span>
+        <a id="weather" class="weather" hidden></a>
+        <a id="air" class="air" hidden></a>
+      </div>
+      <div id="ddays" class="ddays" aria-label="디데이" hidden></div>
+      <div id="market" class="market" aria-label="시장 지수" hidden></div>
+    </header>
+
+    <form id="search" class="search" role="search" autocomplete="off">
+      <select id="engine" aria-label="검색엔진"></select>
+      <input id="q" type="search" placeholder="검색하거나 주소 입력" aria-label="검색" enterkeyhint="search" spellcheck="false">
+    </form>
+
+    <nav id="tabs" class="tabs" aria-label="그룹"></nav>
+    <section id="grid" class="grid" aria-label="즐겨찾기"></section>
+    <p id="empty" class="empty" hidden></p>
+    <section id="gmail" class="gmail" aria-label="Gmail" hidden></section>
+  </main>
+
+  <footer class="bar">
+    <button type="button" id="status" class="status" data-state="local">
+      <span class="dot"></span><span id="statusText">이 기기에만 저장</span>
+    </button>
+    <button type="button" id="editBtn" class="iconbtn" aria-pressed="false" title="편집 (E)">
+      <svg class="ico when-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l10.5-10.5a2.12 2.12 0 0 0-3-3L5 17v3z"/><path d="M13.5 6.5l3 3"/></svg>
+      <span class="when-on">완료</span>
+    </button>
+    <button type="button" id="settingsBtn" class="iconbtn" title="설정">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+    </button>
+  </footer>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <!-- 즐겨찾기 추가/수정 -->
+  <dialog id="itemDlg">
+    <form id="itemForm" novalidate>
+      <h2 id="itemTitle">즐겨찾기 추가</h2>
+      <label>주소<input name="url" inputmode="url" placeholder="예: naver.com" spellcheck="false" required></label>
+      <label>이름<input name="title" maxlength="60" placeholder="비워두면 주소로 자동 지정"></label>
+      <label>그룹<select name="group"></select></label>
+      <details id="iconDetails">
+        <summary>아이콘 직접 지정</summary>
+        <label>아이콘 이미지 주소<input name="icon" inputmode="url" placeholder="비워두면 사이트 아이콘 사용" spellcheck="false"></label>
+      </details>
+      <div class="actions">
+        <button type="button" id="itemDelete" class="danger">삭제</button>
+        <span class="spacer"></span>
+        <button type="button" data-close>취소</button>
+        <button type="submit" class="primary">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 그룹 추가/수정 -->
+  <dialog id="groupDlg">
+    <form id="groupForm" novalidate>
+      <h2 id="groupTitle">그룹 추가</h2>
+      <label>그룹 이름<input name="title" maxlength="40" placeholder="예: 업무" required></label>
+      <div class="actions">
+        <button type="button" id="groupDelete" class="danger">삭제</button>
+        <span class="spacer"></span>
+        <button type="button" data-close>취소</button>
+        <button type="submit" class="primary">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 설정 -->
+  <dialog id="settingsDlg" class="wide">
+    <div class="dlg-head">
+      <h2>설정</h2>
+      <button type="button" class="iconbtn" data-close aria-label="닫기">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+
+    <section>
+      <h3>일반</h3>
+      <label class="check"><input type="checkbox" id="newTab"> 즐겨찾기와 검색을 새 탭에서 열기</label>
+      <label class="check"><input type="checkbox" id="showMarket"> 코스피·나스닥 지수 표시</label>
+    </section>
+
+    <section>
+      <h3>시계</h3>
+      <div id="clockStyles" class="style-opts" role="radiogroup" aria-label="시계 모양"></div>
+      <label class="check"><input type="checkbox" id="clockSeconds"> 초 표시</label>
+      <label class="check"><input type="checkbox" id="clock12"> 12시간제 (오전/오후)</label>
+    </section>
+
+    <section id="ddaySection">
+      <h3>디데이</h3>
+      <div id="ddayList" class="dd-list"></div>
+      <form id="ddayForm" class="inline-form multiline" novalidate>
+        <input name="title" maxlength="30" placeholder="이름 (예: 시험, 여행)" aria-label="디데이 이름">
+        <input name="date" type="date" aria-label="날짜">
+        <button type="submit">추가</button>
+      </form>
+      <p id="ddayMsg" class="msg" aria-live="polite"></p>
+    </section>
+
+    <section>
+      <h3>날씨</h3>
+      <label class="check"><input type="checkbox" id="showWeather"> 날씨 표시</label>
+      <label class="check"><input type="checkbox" id="showAir"> 미세먼지 표시</label>
+      <p id="weatherWhere" class="hint"></p>
+      <form id="weatherForm" class="inline-form" novalidate>
+        <input name="city" placeholder="지역 이름 (예: 용인, 수지구, 부산)" aria-label="도시 검색" spellcheck="false">
+        <button type="submit">검색</button>
+      </form>
+      <div id="weatherResults" class="results"></div>
+      <div class="actions left">
+        <button type="button" id="useLocation">현재 위치 사용</button>
+      </div>
+      <p id="weatherMsg" class="msg" aria-live="polite"></p>
+    </section>
+
+    <section id="gmailSection">
+      <h3>Gmail</h3>
+      <p class="hint">안 읽은 메일 수와 최근 메일 5개(보낸 사람·제목·시간)를 보여줘요. 메일 본문은 읽지 않고, 메일 내용은 어디에도 저장하지 않아요. 처음 한 번 Google Cloud에서 OAuth 클라이언트 ID를 만들어야 해요 (README.md 참고).</p>
+      <label class="check"><input type="checkbox" id="showGmail"> Gmail 표시</label>
+      <form id="gmailForm" novalidate>
+        <label>OAuth 클라이언트 ID<input name="clientId" placeholder="123456789-xxxx.apps.googleusercontent.com" spellcheck="false" autocapitalize="off" autocomplete="off"></label>
+        <p id="gmailMsg" class="msg" aria-live="polite"></p>
+        <div class="actions">
+          <button type="button" id="gmailDisconnect" class="danger">연결 해제</button>
+          <span class="spacer"></span>
+          <button type="submit" id="gmailConnect" class="primary">연결</button>
+        </div>
+      </form>
+    </section>
+
+    <section>
+      <h3>GitHub 동기화</h3>
+      <p class="hint">비공개 저장소의 JSON 파일 하나에 저장해서 PC, 노트북, 태블릿이 같은 데이터를 써요. 설정 방법은 README.md에 있어요.</p>
+      <form id="syncForm" novalidate>
+        <div class="row2">
+          <label>GitHub 사용자명<input name="owner" placeholder="my-id" spellcheck="false" autocapitalize="off"></label>
+          <label>데이터 저장소<input name="repo" value="dashboard-data" spellcheck="false" autocapitalize="off"></label>
+        </div>
+        <div class="row2">
+          <label>브랜치<input name="branch" value="main" spellcheck="false" autocapitalize="off"></label>
+          <label>파일 경로<input name="path" value="data.json" spellcheck="false" autocapitalize="off"></label>
+        </div>
+        <label>토큰<input name="token" type="password" autocomplete="off" placeholder="github_pat_…" spellcheck="false"></label>
+        <label class="check"><input type="checkbox" name="remember" checked> 이 기기에 토큰 기억 (공용 PC에서는 해제)</label>
+        <p id="syncMsg" class="msg" aria-live="polite"></p>
+        <div class="actions">
+          <button type="button" id="disconnectBtn" class="danger">연결 해제</button>
+          <span class="spacer"></span>
+          <button type="button" id="syncNowBtn">지금 동기화</button>
+          <button type="submit" id="connectBtn" class="primary">연결</button>
+        </div>
+      </form>
+    </section>
+
+    <section>
+      <h3>백업</h3>
+      <p class="hint">동기화와 별개로 파일로 보관하거나 다른 곳으로 옮길 때 써요.</p>
+      <div class="actions left">
+        <button type="button" id="exportBtn">JSON 내보내기</button>
+        <button type="button" id="importBtn">JSON 가져오기</button>
+        <input type="file" id="importFile" accept="application/json,.json" hidden>
+      </div>
+      <p id="backupMsg" class="msg" aria-live="polite"></p>
+    </section>
+  </dialog>
+
+  <!-- 확인 창 -->
+  <dialog id="askDlg">
+    <form method="dialog">
+      <h2 id="askTitle"></h2>
+      <p id="askMsg" class="hint"></p>
+      <div id="askActions" class="actions end"></div>
+    </form>
+  </dialog>
+</body>
+</html>
