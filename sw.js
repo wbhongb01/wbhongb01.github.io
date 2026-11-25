@@ -1,5 +1,5 @@
 // 오프라인에서도 화면이 뜨도록 앱 파일만 캐시 (GitHub API·외부 사이트 요청은 건드리지 않음)
-const CACHE = 'dash-v11';
+const CACHE = 'dash-v12';
 const SHELL = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', (e) => {

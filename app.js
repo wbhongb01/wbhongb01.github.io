@@ -126,6 +126,7 @@ function defaultData() {
       weather: { ...DEFAULT_WEATHER },
       clock: { ...DEFAULT_CLOCK },
       gmail: { show: true, clientId: PRESET_GMAIL_CLIENT_ID },
+      card: { show: true, budget: 0, colors: {}, excluded: [], fixes: {} },
     },
     groups: [
       {
@@ -164,6 +165,7 @@ function sanitize(d) {
   const w = s.weather || {};
   const c = s.clock || {};
   const gm = s.gmail || {};
+  const cd = s.card || {};
   const groups = d.groups
     .filter((g) => g && typeof g.name === 'string')
     .map((g) => ({
@@ -179,6 +181,18 @@ function sanitize(d) {
       engine: ENGINES[s.engine] ? s.engine : 'google',
       newTab: !!s.newTab,
       showMarket: s.showMarket !== false,
+      card: {
+        show: cd.show !== false,
+        budget: Number.isFinite(Number(cd.budget)) && Number(cd.budget) > 0 ? Math.round(Number(cd.budget)) : 0,
+        // 카드 이름 → 색 번호(1~8). 한 번 정해지면 바뀌지 않음
+        colors: Object.fromEntries(Object.entries(cd.colors && typeof cd.colors === 'object' ? cd.colors : {})
+          .filter(([k, v]) => k && Number.isInteger(v) && v >= 1 && v <= 8).slice(0, 8)),
+        // 대시보드에서 제외한 결제 id
+        excluded: (Array.isArray(cd.excluded) ? cd.excluded : []).filter((x) => typeof x === 'string').slice(-3000),
+        // 대시보드에서 고친 금액 (id → 원)
+        fixes: Object.fromEntries(Object.entries(cd.fixes && typeof cd.fixes === 'object' ? cd.fixes : {})
+          .filter(([, v]) => Number.isFinite(v)).slice(-1000)),
+      },
       gmail: {
         show: gm.show !== false,
         clientId: typeof gm.clientId === 'string' && CLIENT_ID_RE.test(gm.clientId.trim()) ? gm.clientId.trim() : PRESET_GMAIL_CLIENT_ID,
@@ -255,6 +269,7 @@ function render() {
   renderWeather();
   renderDdays();
   renderGmail();
+  renderCard();
   tick();
   $('#engine').value = data.settings.engine;
 }
@@ -1250,6 +1265,390 @@ async function onGmailSubmit(e) {
   await onGmailConnectClick(msg);
 }
 
+/* ---------- 카드 사용 ----------
+ * 휴대폰 '카드알림 전달' 앱이 비공개 저장소 dashboard-data/card/YYYY-MM.json 에 쌓은
+ * 결제 알림 원문을 읽어, 여기서 카드·금액·가맹점을 해석하고 하루 사용액을 카드별로 쌓은 막대로 보여줌.
+ * 해석이 틀리면 내역 표에서 금액을 고치거나 제외할 수 있음 (설정과 함께 동기화) */
+const CARD_BRANDS = [
+  [/신한/, '신한'], [/삼성/, '삼성'], [/현대/, '현대'], [/KB|국민/, 'KB국민'], [/롯데/, '롯데'],
+  [/하나/, '하나'], [/우리/, '우리'], [/NH|농협/, 'NH농협'], [/BC|비씨/, 'BC'], [/씨티/, '씨티'],
+  [/IBK|기업/, 'IBK기업'], [/카카오/, '카카오'], [/토스/, '토스'], [/케이뱅크/, '케이뱅크'], [/우체국/, '우체국'],
+];
+const ymOf = (d) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}`;
+const shiftYm = (ym, n) => {
+  const [y, m] = ym.split('-').map(Number);
+  return ymOf(new Date(y, m - 1 + n, 1));
+};
+
+function guessMerchant(body) {
+  // "11/25 14:03 스타벅스 누적…" 처럼 시각 뒤에 오는 가맹점
+  const t = body.match(/\d{1,2}[:시]\s?\d{2}분?\s+([^\n]+?)(?:\s+(?:누적|잔액|잔여)[^\n]*)?$/m);
+  if (t) return t[1].trim().slice(0, 24);
+  const lines = body.split('\n').map((s) => s.trim()).filter(Boolean);
+  const cand = [...lines].reverse().find((l) => !/원|누적|승인|취소|잔액|\d{1,2}\/\d{1,2}/.test(l));
+  return (cand || '').slice(0, 24);
+}
+
+/** 알림 원문 한 건 → { id, time, card, amount(취소는 음수, 못 찾으면 null), merchant, ignored } */
+function parseCardRecord(r) {
+  const title = String(r.title || '');
+  const body = String(r.body || '');
+  const text = `${title}\n${body}`;
+  // 카드사는 앱 이름 → 제목 → 본문 순으로 찾음 (본문의 '현대백화점' 같은 가맹점에 속지 않도록)
+  const brand = (src) => (CARD_BRANDS.find(([re]) => re.test(src)) || [])[1];
+  const card = brand(String(r.app || '')) || brand(title) || brand(body)
+    || String(r.app || '카드').replace(/\s*(앱|카드|페이|pay)$/i, '').trim() || '카드';
+  let amount = null;
+  for (const m of text.matchAll(/([0-9][0-9,]{0,12})\s*원/g)) {
+    const before = text.slice(Math.max(0, m.index - 6), m.index);
+    if (/누적|잔액|잔여|한도|포인트|적립|캐시백|할인/.test(before)) continue;
+    const v = Number(m[1].replace(/,/g, ''));
+    if (v > 0) { amount = v; break; }
+  }
+  const cancel = /취소/.test(text);
+  return {
+    id: String(r.id || ''),
+    time: new Date(r.t),
+    card,
+    amount: amount == null ? null : cancel ? -amount : amount,
+    cancel,
+    merchant: guessMerchant(body) || guessMerchant(title),
+    ignored: /거절|실패|불가|미승인/.test(text),
+  };
+}
+
+const Card = {
+  month: ymOf(new Date()),
+  cache: {}, // 'YYYY-MM' → 원문 배열 (메모리에만, 저장하지 않음)
+  loading: false,
+  error: '',
+  lastLoad: 0,
+  hide: !!store.get('dash.card.hide', false),
+  showList: false,
+
+  async fetchMonth(ym) {
+    const url = `${Sync.repoUrl()}/contents/card/${ym}.json?ref=${encodeURIComponent(Sync.cfg.branch)}`;
+    try {
+      const j = await Sync.request(url, { headers: Sync.headers() });
+      const doc = JSON.parse(fromB64(j.content || ''));
+      return Array.isArray(doc.items) ? doc.items : [];
+    } catch (err) {
+      if (err.status === 404) return []; // 그 달 기록 없음
+      throw err;
+    }
+  },
+
+  async load(force = false) {
+    if (!data.settings.card.show || !Sync.enabled) return renderCard();
+    if (this.loading) return;
+    if (!force && this.cache[this.month] && Date.now() - this.lastLoad < 4 * 60 * 1000) return renderCard();
+    this.loading = true;
+    renderCard();
+    try {
+      const prev = shiftYm(this.month, -1);
+      const [cur, before] = await Promise.all([
+        this.fetchMonth(this.month),
+        this.cache[prev] && !force ? this.cache[prev] : this.fetchMonth(prev),
+      ]);
+      this.cache[this.month] = cur;
+      this.cache[prev] = before;
+      this.error = '';
+    } catch (err) {
+      this.error = err.message || '카드 기록을 불러오지 못했어요';
+    } finally {
+      this.loading = false;
+      this.lastLoad = Date.now();
+      renderCard();
+    }
+  },
+
+  go(n) {
+    this.month = shiftYm(this.month, n);
+    this.error = '';
+    this.load(true);
+  },
+};
+
+/** 원문 → 해석 + 사용자가 고친 금액·제외 반영 */
+function cardItems(ym) {
+  const cs = data.settings.card;
+  const excluded = new Set(cs.excluded);
+  return (Card.cache[ym] || []).map(parseCardRecord).map((it) => {
+    const fixed = Object.prototype.hasOwnProperty.call(cs.fixes, it.id);
+    const amount = fixed ? cs.fixes[it.id] : it.amount;
+    return { ...it, amount, fixed, excluded: excluded.has(it.id), counted: !excluded.has(it.id) && !it.ignored && Number.isFinite(amount) && amount !== 0 };
+  }).filter((it) => !Number.isNaN(it.time.getTime()));
+}
+
+const won = (n) => (Card.hide ? '•••••원' : `${Math.round(n).toLocaleString('ko-KR')}원`);
+const wonShort = (n) => {
+  if (Card.hide) return '';
+  if (n >= 100000000) return `${+(n / 100000000).toFixed(1)}억`;
+  if (n >= 10000) return `${+(n / 10000).toFixed(n >= 100000 ? 0 : 1)}만`;
+  return n.toLocaleString('ko-KR');
+};
+const niceCeil = (v) => {
+  if (v <= 0) return 10000;
+  const p = 10 ** Math.floor(Math.log10(v));
+  return [1, 2, 2.5, 5, 10].map((k) => k * p).find((x) => x >= v);
+};
+
+/** 새 카드에 다음 색 번호를 붙임 (한 번 정해지면 고정, 9번째부터는 '기타' 회색) */
+function cardSlot(card, assign) {
+  const colors = data.settings.card.colors;
+  if (colors[card]) return colors[card];
+  const pending = assign ? assign.find(([c]) => c === card) : null;
+  if (pending) return pending[1];
+  // 이미 정한 색 + 이번에 함께 정하는 색은 건너뜀
+  const used = [...Object.values(colors), ...(assign || []).map(([, n]) => n)];
+  const next = [1, 2, 3, 4, 5, 6, 7, 8].find((n) => !used.includes(n));
+  if (!next) return 0;
+  if (assign) assign.push([card, next]);
+  return next;
+}
+
+function renderCard() {
+  const box = $('#card');
+  const cs = data.settings.card;
+  if (!cs.show) { box.hidden = true; return; }
+  box.hidden = false;
+
+  const [y, m] = Card.month.split('-').map(Number);
+  const isThisMonth = Card.month === ymOf(new Date());
+  const head = h('div', { class: 'gm-head' },
+    h('span', { class: 'gm-title' }, '카드 사용'),
+    h('span', { class: 'cd-month' },
+      h('button', { type: 'button', class: 'gm-refresh', 'aria-label': '이전 달', onclick: () => Card.go(-1), html: '<svg class="ico" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>' }),
+      h('span', {}, `${y}년 ${m}월`),
+      h('button', { type: 'button', class: 'gm-refresh', 'aria-label': '다음 달', disabled: isThisMonth, onclick: () => Card.go(1), html: '<svg class="ico" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>' })),
+    h('span', { class: 'spacer' }),
+    Sync.enabled ? h('button', {
+      type: 'button',
+      class: 'gm-refresh' + (Card.hide ? ' on' : ''),
+      title: Card.hide ? '금액 보이기' : '금액 숨기기',
+      'aria-label': Card.hide ? '금액 보이기' : '금액 숨기기',
+      onclick: () => { Card.hide = !Card.hide; store.set('dash.card.hide', Card.hide); renderCard(); },
+      html: Card.hide
+        ? '<svg class="ico" viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M10.6 6.1A9.7 9.7 0 0 1 12 6c5 0 9 6 9 6a17 17 0 0 1-2.6 3.2M6.6 7.6C4.4 9.1 3 12 3 12s4 6 9 6c1.4 0 2.7-.4 3.9-1"/></svg>'
+        : '<svg class="ico" viewBox="0 0 24 24"><path d="M3 12s4-6 9-6 9 6 9 6-4 6-9 6-9-6-9-6z"/><circle cx="12" cy="12" r="2.5"/></svg>',
+    }) : null,
+    Sync.enabled ? h('button', { type: 'button', class: 'gm-refresh', title: '새로고침', 'aria-label': '카드 기록 새로고침', disabled: Card.loading, onclick: () => Card.load(true), html: '<svg class="ico" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>' }) : null);
+
+  if (!Sync.enabled) {
+    box.replaceChildren(head, h('div', { class: 'gm-empty' },
+      h('span', {}, '카드 사용 그래프는 GitHub 동기화를 연결한 기기에서 보여요.'),
+      h('button', { type: 'button', class: 'gm-connect', onclick: openSettings }, '동기화 설정')));
+    return;
+  }
+  if (!Card.cache[Card.month] && !Card.loading && !Card.error) Card.load();
+  if (!Card.cache[Card.month]) {
+    box.replaceChildren(...[head, h('div', { class: 'gm-empty' }, Card.loading ? '카드 기록을 불러오는 중…' : ''),
+      Card.error ? h('p', { class: 'gm-error' }, Card.error) : null].filter(Boolean));
+    return;
+  }
+
+  const items = cardItems(Card.month);
+  const counted = items.filter((it) => it.counted);
+
+  // 카드별 색 (처음 보는 카드면 다음 색을 정해 동기화 데이터에 저장)
+  const assign = [];
+  const cards = [...new Set(counted.map((it) => it.card))];
+  cards.forEach((c) => cardSlot(c, assign));
+  if (assign.length) {
+    commit(() => { assign.forEach(([c, n]) => { data.settings.card.colors[c] = n; }); });
+    return; // commit이 다시 그림
+  }
+  const slotOf = (c) => cardSlot(c);
+  const order = [...cards].sort((a, b) => (slotOf(a) || 99) - (slotOf(b) || 99));
+  const color = (c) => (slotOf(c) ? `var(--s${slotOf(c)})` : 'var(--faint)');
+
+  // 날짜별 · 카드별 합계
+  const days = new Date(y, m, 0).getDate();
+  const byDay = Array.from({ length: days }, () => ({}));
+  const listByDay = Array.from({ length: days }, () => []);
+  for (const it of counted) {
+    const d = it.time.getDate() - 1;
+    byDay[d][it.card] = (byDay[d][it.card] || 0) + it.amount;
+    listByDay[d].push(it);
+  }
+  const total = counted.reduce((s, it) => s + it.amount, 0);
+  const cardTotals = Object.fromEntries(order.map((c) => [c, counted.filter((it) => it.card === c).reduce((s, it) => s + it.amount, 0)]));
+
+  // 지난달 같은 날까지 비교 (이번 달일 때만)
+  let compare = null;
+  const prevItems = Card.cache[shiftYm(Card.month, -1)];
+  if (isThisMonth && prevItems) {
+    const today = new Date().getDate();
+    const prev = cardItems(shiftYm(Card.month, -1)).filter((it) => it.counted && it.time.getDate() <= today)
+      .reduce((s, it) => s + it.amount, 0);
+    if (prev > 0) {
+      const pct = Math.round(((total - prev) / prev) * 100);
+      compare = `지난달 같은 날까지 ${won(prev)} · ${pct > 0 ? '▲' : pct < 0 ? '▼' : ''}${Math.abs(pct)}%`;
+    }
+  }
+
+  const hero = h('div', { class: 'cd-hero' },
+    h('div', { class: 'cd-total' }, won(total)),
+    h('div', { class: 'cd-sub' }, compare || `${counted.length}건${isThisMonth ? ' · 오늘까지' : ''}`));
+
+  let meter = null;
+  if (cs.budget > 0) {
+    const ratio = total / cs.budget;
+    meter = h('div', { class: 'cd-budget' },
+      h('div', { class: 'cd-meter', role: 'meter', 'aria-valuemin': '0', 'aria-valuemax': String(cs.budget), 'aria-valuenow': String(Math.max(0, total)), 'aria-label': '월 예산 대비 사용액' },
+        h('span', { class: 'cd-fill' + (ratio > 1 ? ' over' : ''), style: `width:${Math.min(100, Math.max(0, ratio * 100)).toFixed(1)}%` })),
+      h('div', { class: 'cd-budget-text' },
+        h('span', {}, `예산 ${won(cs.budget)} 중 ${Card.hide ? '••' : Math.round(ratio * 100)}%`),
+        h('span', {}, ratio > 1 ? `${won(total - cs.budget)} 초과` : `${won(cs.budget - total)} 남음`)));
+  }
+
+  box.replaceChildren(...[
+    head,
+    hero,
+    meter,
+    counted.length ? cardChart({ y, m, days, byDay, listByDay, order, color, isThisMonth }) : h('div', { class: 'gm-empty' }, '이 달에 기록된 카드 사용이 없어요.'),
+    order.length ? h('div', { class: 'cd-legend' }, order.map((c) => h('span', { class: 'cd-key' },
+      h('i', { style: `background:${color(c)}` }), h('span', {}, c), h('b', {}, won(cardTotals[c]))))) : null,
+    items.length ? h('button', { type: 'button', class: 'cd-toggle', onclick: () => { Card.showList = !Card.showList; renderCard(); } },
+      Card.showList ? '내역 닫기' : `내역 보기 (${items.length}건)`) : null,
+    Card.showList ? cardTable(items, color) : null,
+    Card.error ? h('p', { class: 'gm-error' }, Card.error) : null,
+  ].filter(Boolean));
+}
+
+/** 하루 사용액을 카드별로 쌓은 막대 (SVG, 축 하나) */
+function cardChart({ y, m, days, byDay, listByDay, order, color, isThisMonth }) {
+  const wrap = h('div', { class: 'cd-chart' });
+  const W = Math.max(280, Math.round(($('#card').clientWidth || 560) - 36));
+  const H = 180;
+  const pad = { l: Card.hide ? 8 : 40, r: 6, t: 10, b: 24 };
+  const pw = W - pad.l - pad.r;
+  const ph = H - pad.t - pad.b;
+  const dayTotals = byDay.map((o) => Object.values(o).reduce((s, v) => s + Math.max(0, v), 0));
+  const max = niceCeil(Math.max(...dayTotals, 0));
+  const yOf = (v) => pad.t + ph - (v / max) * ph;
+  const slotW = pw / days;
+  const bw = Math.max(3, Math.min(18, slotW * 0.62));
+  const today = new Date().getDate();
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs) => {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    return e;
+  };
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img', 'aria-label': `${m}월 하루 카드 사용액 막대그래프` });
+
+  // 눈금선 (0, 절반, 최대)
+  for (const v of [0, max / 2, max]) {
+    svg.append(el('line', { x1: pad.l, x2: W - pad.r, y1: yOf(v), y2: yOf(v), class: v === 0 ? 'cd-base' : 'cd-grid' }));
+    if (!Card.hide && v > 0) {
+      const t = el('text', { x: pad.l - 6, y: yOf(v) + 4, class: 'cd-tick', 'text-anchor': 'end' });
+      t.textContent = wonShort(v);
+      svg.append(t);
+    }
+  }
+  // 날짜 눈금: 1일, 5의 배수, 말일, 오늘
+  for (let d = 1; d <= days; d++) {
+    if (!(d === 1 || d % 5 === 0 || d === days || (isThisMonth && d === today))) continue;
+    if (d === days && days - (Math.floor(days / 5) * 5) < 2 && !(isThisMonth && d === today)) continue;
+    const t = el('text', { x: pad.l + slotW * (d - 0.5), y: H - 6, class: 'cd-tick' + (isThisMonth && d === today ? ' today' : ''), 'text-anchor': 'middle' });
+    t.textContent = isThisMonth && d === today ? '오늘' : String(d);
+    svg.append(t);
+  }
+
+  // 막대: 아래부터 카드 순서대로 쌓고, 조각 사이 2px 띄움, 맨 위만 둥글게
+  const GAP = 2;
+  for (let i = 0; i < days; i++) {
+    const segs = order.map((c) => [c, Math.max(0, byDay[i][c] || 0)]).filter(([, v]) => v > 0);
+    if (!segs.length) continue;
+    const x = pad.l + slotW * i + (slotW - bw) / 2;
+    let acc = 0;
+    segs.forEach(([c, v], k) => {
+      const top = yOf(acc + v);
+      const bottom = yOf(acc);
+      acc += v;
+      const last = k === segs.length - 1;
+      const h0 = Math.max(1, bottom - top - (last ? 0 : GAP));
+      const yTop = last ? top : top + GAP;
+      const r = last ? Math.min(4, bw / 2, h0) : 0;
+      const d = `M${x},${yTop + h0} V${yTop + r} Q${x},${yTop} ${x + r},${yTop} H${x + bw - r} Q${x + bw},${yTop} ${x + bw},${yTop + r} V${yTop + h0} Z`;
+      svg.append(el('path', { d, style: `fill:${color(c)}` }));
+    });
+  }
+
+  // 마우스·터치 영역: 하루 칸 전체
+  const tip = h('div', { class: 'cd-tip', hidden: true });
+  const show = (i, cx) => {
+    const list = listByDay[i];
+    if (!list.length) { tip.hidden = true; return; }
+    const date = new Date(y, m - 1, i + 1);
+    const segs = order.filter((c) => byDay[i][c]);
+    tip.replaceChildren(
+      h('div', { class: 'cd-tip-h' }, `${m}월 ${i + 1}일 (${'일월화수목금토'[date.getDay()]}) · ${won(dayTotals[i])}`),
+      ...segs.map((c) => h('div', { class: 'cd-tip-row' }, h('i', { style: `background:${color(c)}` }), h('span', {}, c), h('b', {}, won(byDay[i][c])))),
+      h('div', { class: 'cd-tip-list' }, list.slice(0, 6).map((it) => h('div', {},
+        `${p2(it.time.getHours())}:${p2(it.time.getMinutes())} ${it.merchant || it.card} ${won(it.amount)}`)),
+      list.length > 6 ? h('div', {}, `외 ${list.length - 6}건`) : null),
+    );
+    tip.hidden = false;
+    const left = Math.min(Math.max(cx - tip.offsetWidth / 2, 0), wrap.clientWidth - tip.offsetWidth);
+    tip.style.left = `${left}px`;
+  };
+  for (let i = 0; i < days; i++) {
+    const hit = el('rect', { x: pad.l + slotW * i, y: pad.t, width: slotW, height: ph, class: 'cd-hit' });
+    const cx = pad.l + slotW * (i + 0.5);
+    hit.addEventListener('pointerenter', () => show(i, cx * (wrap.clientWidth / W)));
+    hit.addEventListener('pointerdown', () => show(i, cx * (wrap.clientWidth / W)));
+    svg.append(hit);
+  }
+  svg.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') tip.hidden = true; });
+  wrap.append(svg, tip);
+  return wrap;
+}
+
+/** 내역 표: 금액 고치기 · 제외/복원 (색만으로 구분하지 않도록 카드 이름도 글자로) */
+function cardTable(items, color) {
+  const rows = [...items].sort((a, b) => b.time - a.time);
+  const setExcluded = (id, on) => commit(() => {
+    const ex = new Set(data.settings.card.excluded);
+    if (on) ex.add(id); else ex.delete(id);
+    data.settings.card.excluded = [...ex];
+  });
+  const editAmount = (it, cell) => {
+    const input = h('input', { type: 'number', inputmode: 'numeric', value: Number.isFinite(it.amount) ? String(it.amount) : '', 'aria-label': '금액' });
+    const save = () => commit(() => {
+      const v = input.value.trim();
+      if (v === '') delete data.settings.card.fixes[it.id];
+      else if (Number.isFinite(Number(v))) data.settings.card.fixes[it.id] = Math.round(Number(v));
+    });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') renderCard(); });
+    input.addEventListener('blur', save);
+    cell.replaceChildren(input);
+    input.focus();
+    input.select();
+  };
+  return h('div', { class: 'cd-table-wrap' }, h('table', { class: 'cd-table' },
+    h('thead', {}, h('tr', {}, h('th', {}, '날짜'), h('th', {}, '카드'), h('th', {}, '가맹점'), h('th', { class: 'num' }, '금액'), h('th', {}, ''))),
+    h('tbody', {}, rows.map((it) => {
+      const amountCell = h('td', { class: 'num' },
+        it.ignored ? '승인 거절' : Number.isFinite(it.amount) ? won(it.amount) : '금액 없음',
+        it.fixed ? h('span', { class: 'cd-flag' }, ' (수정)') : null);
+      return h('tr', { class: it.counted ? '' : 'off' },
+        h('td', {}, `${it.time.getMonth() + 1}/${it.time.getDate()} ${p2(it.time.getHours())}:${p2(it.time.getMinutes())}`),
+        h('td', {}, h('i', { class: 'cd-dot', style: `background:${color(it.card)}` }), it.card),
+        h('td', { title: it.merchant }, it.merchant || '-'),
+        amountCell,
+        h('td', { class: 'cd-actions' },
+          Card.hide ? null : h('button', { type: 'button', onclick: () => editAmount(it, amountCell) }, '수정'),
+          h('button', { type: 'button', onclick: () => setExcluded(it.id, !it.excluded) }, it.excluded ? '복원' : '제외')));
+    }))));
+}
+
+function fillCardSettings() {
+  $('#showCard').checked = data.settings.card.show;
+  $('#cardBudget').value = data.settings.card.budget || '';
+}
+
 /* ---------- 검색 ---------- */
 function clearSearch() {
   $('#q').value = '';
@@ -1769,6 +2168,7 @@ function fillSettings() {
   $('#showMarket').checked = data.settings.showMarket;
   fillClockSettings();
   fillGmailSettings();
+  fillCardSettings();
   setMsg($('#ddayMsg'), '');
   fillDdaySettings();
   setMsg($('#weatherMsg'), '');
@@ -1935,6 +2335,16 @@ function init() {
     Gmail.load();
   });
   $('#gmailForm').addEventListener('submit', onGmailSubmit);
+  $('#showCard').addEventListener('change', (e) => commit(() => { data.settings.card.show = e.target.checked; }));
+  $('#cardBudget').addEventListener('change', (e) => {
+    const v = Math.round(Number(e.target.value));
+    commit(() => { data.settings.card.budget = Number.isFinite(v) && v > 0 ? v : 0; });
+  });
+  let resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(renderCard, 150);
+  });
   $('#gmailForm').elements.clientId.addEventListener('change', () => Gmail.loadGis().catch(() => {}));
   $('#gmailDisconnect').addEventListener('click', () => {
     Gmail.disconnect();
@@ -1979,6 +2389,7 @@ function init() {
     if (Date.now() - Market.lastLoad > 3 * 60 * 1000) Market.load();
     if (Date.now() - Weather.lastLoad > 15 * 60 * 1000) Weather.load();
     if (Date.now() - Gmail.lastLoad > 5 * 60 * 1000) Gmail.load();
+    if (Sync.enabled && Date.now() - Card.lastLoad > 5 * 60 * 1000) Card.load(true);
   };
   setInterval(refresh, 60 * 1000);
   document.addEventListener('visibilitychange', () => {

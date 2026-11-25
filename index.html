@@ -36,6 +36,7 @@
     <nav id="tabs" class="tabs" aria-label="그룹"></nav>
     <section id="grid" class="grid" aria-label="즐겨찾기"></section>
     <p id="empty" class="empty" hidden></p>
+    <section id="card" class="gmail cardp" aria-label="카드 사용" hidden></section>
     <section id="gmail" class="gmail" aria-label="Gmail" hidden></section>
   </main>
 
@@ -135,6 +136,13 @@
         <button type="button" id="useLocation">현재 위치 사용</button>
       </div>
       <p id="weatherMsg" class="msg" aria-live="polite"></p>
+    </section>
+
+    <section>
+      <h3>카드 사용</h3>
+      <p class="hint">휴대폰의 '카드알림 전달' 앱이 비공개 저장소에 쌓은 결제 알림을 읽어 하루 사용액을 카드별로 쌓은 막대그래프로 보여줘요. GitHub 동기화를 연결한 기기에서만 보여요.</p>
+      <label class="check"><input type="checkbox" id="showCard"> 카드 사용 그래프 표시</label>
+      <label>월 예산 (원, 비우면 표시 안 함)<input id="cardBudget" type="number" inputmode="numeric" min="0" step="10000" placeholder="예: 1500000"></label>
     </section>
 
     <section id="gmailSection">

@@ -18,6 +18,9 @@
   --air-1: #2a9460;
   --air-2: #d9822b;
   --air-3: #d93a3a;
+  /* 카드 사용 그래프: 검증된 8색 (정해진 순서로만 사용) */
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
   --flip-bg: #25272b;    /* 플립 시계 카드 */
   --flip-bg-top: #2c2e33;
   --flip-fg: #f3f3f0;
@@ -49,6 +52,8 @@
     --air-1: #4cc38a;
     --air-2: #f0a04a;
     --air-3: #ff6b66;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --s5: #d55181; --s6: #0ca30c; --s7: #9085e9; --s8: #e66767;
     --flip-bg: #202125;
     --flip-bg-top: #26272c;
     --flip-fg: #ececea;
@@ -588,6 +593,65 @@ a.mk:hover { background: var(--surface-2); }
   font-weight: 600;
 }
 .gm-error { margin: 6px 0 0; font-size: 13px; color: var(--danger); }
+
+/* ---------- 카드 사용 ---------- */
+.cardp { position: relative; }
+.cd-month { display: inline-flex; align-items: center; gap: 2px; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.gm-refresh.on { color: var(--accent); }
+.cd-hero { margin: 2px 0 10px; }
+.cd-total { font-size: 28px; font-weight: 650; letter-spacing: -0.01em; }
+.cd-sub { margin-top: 2px; font-size: 13px; color: var(--muted); }
+.cd-budget { margin-bottom: 12px; }
+.cd-meter { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.cd-fill { display: block; height: 100%; border-radius: 999px; background: var(--s1); }
+.cd-fill.over { background: var(--danger); }
+.cd-budget-text { display: flex; justify-content: space-between; margin-top: 5px; font-size: 12px; color: var(--muted); }
+.cd-chart { position: relative; margin: 0 -4px; }
+.cd-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.cd-grid { stroke: var(--line); stroke-width: 1; }
+.cd-base { stroke: var(--faint); stroke-width: 1; }
+.cd-tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.cd-tick.today { fill: var(--text); font-weight: 650; }
+.cd-hit { fill: transparent; cursor: default; }
+.cd-hit:hover { fill: color-mix(in srgb, var(--text) 5%, transparent); }
+.cd-tip {
+  position: absolute;
+  top: 0;
+  z-index: 5;
+  min-width: 180px;
+  max-width: 260px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  font-size: 13px;
+  pointer-events: none;
+}
+.cd-tip[hidden] { display: none; }
+.cd-tip-h { margin-bottom: 6px; font-weight: 650; }
+.cd-tip-row { display: flex; align-items: center; gap: 6px; }
+.cd-tip-row b { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cd-tip-row i, .cd-key i, .cd-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.cd-tip-list { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.6; }
+.cd-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 13px; }
+.cd-key { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.cd-key b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.cd-toggle { margin-top: 10px; padding: 0; border: 0; background: none; color: var(--accent); font-size: 13px; font-weight: 600; }
+.cd-table-wrap { margin-top: 8px; max-height: 320px; overflow: auto; }
+.cd-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.cd-table th { position: sticky; top: 0; padding: 6px; background: var(--surface); color: var(--muted); font-weight: 600; text-align: left; border-bottom: 1px solid var(--line); }
+.cd-table td { padding: 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.cd-table td:nth-child(3) { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.cd-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.cd-table tr.off td { color: var(--faint); text-decoration: line-through; }
+.cd-table tr.off td:last-child { text-decoration: none; }
+.cd-dot { margin-right: 6px; vertical-align: -1px; }
+.cd-flag { color: var(--muted); font-size: 11px; }
+.cd-actions { text-align: right; }
+.cd-actions button { margin-left: 4px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--muted); font-size: 12px; }
+.cd-actions button:hover { color: var(--text); }
+.cd-table input { width: 110px; padding: 3px 6px; border: 1px solid var(--accent); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; text-align: right; }
 
 .empty { margin-top: 28px; text-align: center; color: var(--muted); font-size: 14px; line-height: 1.6; }
 
